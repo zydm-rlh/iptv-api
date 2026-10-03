@@ -249,8 +249,8 @@ iptv-api/                  # Project root directory
 > scheduled runs.
 
 After <a href="https://github.com/Guovin/iptv-api/fork" target="_blank" rel="noopener noreferrer">forking this project</a>, select `GitHub Actions` under `Settings → Pages`, then manually run `Generate playlist manually`.
-For online player use, open the Pages page and use the applicable result address. Release URLs are intended for
-downloading and saving result files. Neither path creates Git commits.
+For online player use, open the Pages page and use the applicable result address. You can preview files there; its
+Download buttons point to the current run's Release assets. Neither path creates Git commits.
 
 ```text
 https://your-github-username.github.io/repository-name/result.m3u

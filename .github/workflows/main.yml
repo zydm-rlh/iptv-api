@@ -183,6 +183,7 @@ jobs:
             fi
             echo
             echo "下载链接 / Download links"
+            echo "- Pages result page (preview/download): $PAGES_BASE"
             echo "- Release TXT: $RELEASE_BASE/result.txt"
             if [[ -f release-assets/result.m3u ]]; then
               echo "- Release M3U: $RELEASE_BASE/result.m3u"
@@ -190,12 +191,21 @@ jobs:
             if [[ -f release-assets/epg.gz ]]; then
               echo "- Release EPG: $RELEASE_BASE/epg.gz"
             fi
+            if [[ -f release-assets/log.log ]]; then
+              echo "- Release runtime log: $RELEASE_BASE/log.log"
+            fi
+            if [[ -f release-assets/result.log ]]; then
+              echo "- Release result log: $RELEASE_BASE/result.log"
+            fi
+            if [[ -f release-assets/unmatch.log ]]; then
+              echo "- Release unmatched channels: $RELEASE_BASE/unmatch.log"
+            fi
             echo
             echo "Generated from \`${{ steps.assets.outputs.final_file }}\` without creating a Git commit."
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-pages:
-    needs: generate
+    needs: [generate, publish-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -235,13 +245,13 @@ jobs:
           release_title="$RELEASE_TITLE"
           pages_link="<a href=\"$PAGES_BASE\" target=\"_blank\" rel=\"noopener noreferrer\">打开 GitHub Pages 结果页面 / Open GitHub Pages results page</a>"
           printf -v release_notes '%s\n\n%s\n\n%s' \
-            "手动生成的 IPTV 结果。播放器在线使用请打开 GitHub Pages 页面获取相应的结果地址；Release 附件用于下载和保存结果文件。" \
-            "Manually generated IPTV results. For online player use, open the GitHub Pages page and use the applicable result address; Release assets are for downloading and saving result files." \
+            "手动生成的 IPTV 结果。GitHub Pages 页面提供在线订阅地址与预览，下载按钮指向本次 Release 的结果文件和日志附件。" \
+            "Manually generated IPTV results. The GitHub Pages page provides subscription URLs and previews; its Download buttons point to this Release's result files and logs." \
             "$pages_link"
           if [[ "$GITHUB_REPOSITORY" == "Guovin/iptv-api" ]]; then
             printf -v release_notes '%s\n\n%s\n\n%s' \
-              "主仓库发布的 Pages 链接和 Release 结果仅用于功能测试，不保证内容完整性、可用性或持续更新。实际使用请 [Fork 项目](https://github.com/Guovin/iptv-api/fork) 并运行自己的工作流。" \
-              "Pages links and Release results from the upstream repository are for functional testing only. Content completeness, availability, and continued updates are not guaranteed. For actual use, [Fork the project](https://github.com/Guovin/iptv-api/fork) and run your own workflow." \
+              "主仓库 Pages 页面提供订阅地址与预览，下载按钮指向本次 Release；其结果和日志仅用于功能测试，不保证内容完整性、可用性或持续更新。实际使用请 [Fork 项目](https://github.com/Guovin/iptv-api/fork) 并运行自己的工作流。" \
+              "The upstream Pages site provides subscription URLs and previews, with Download buttons pointing to this Release. Its results and logs are for functional testing only. Content completeness, availability, and continued updates are not guaranteed. For actual use, [Fork the project](https://github.com/Guovin/iptv-api/fork) and run your own workflow." \
               "$pages_link"
           fi
 

@@ -307,7 +307,7 @@ https://your-github-username.github.io/repository-name/result.txt
 https://your-github-username.github.io/repository-name/epg.gz
 ```
 
-Because Release assets use redirects and download-oriented response headers, use them to download and save result files instead of as player subscription URLs. Asset URLs use this format:
+The Pages results page lets you preview files; its Download buttons point to this run's Release assets, preserving per-run download counts and historical files. Redirects and download-oriented response headers make Release URLs unsuitable for player subscriptions. Asset URLs use this format:
 
 ```text
 https://github.com/your-github-username/repository-name/releases/download/playlist-20260920-103000-utc-plus-0800/result.m3u
@@ -315,7 +315,7 @@ https://github.com/your-github-username/repository-name/releases/download/playli
 
 `result.txt` is always published. `result.m3u` and `epg.gz` exist only when their features are enabled and generation succeeds. The M3U uses the Pages link for EPG.
 
-On the Pages results page, “Copy” always copies the original file URL for players. “Preview” opens an in-site viewer that explicitly decodes UTF-8, avoiding mojibake when a browser opens M3U responses without a charset. Because `epg.gz` is compressed, it only provides the original file action.
+Every file on the Pages results page offers Copy link, Preview, and Download. The viewer displays text as UTF-8 and decompresses `epg.gz` in the browser; Copy link retains the original Pages file URL.
 
 Release and Fork destinations are generated from the repository running the workflow. The upstream site points to `Guovin/iptv-api`, while a fork's site points to that user's own fork. `Fork 项目` in the upstream results notice links directly to the upstream repository's Fork creation page.
 

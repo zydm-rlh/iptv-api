@@ -245,7 +245,7 @@ iptv-api/                  # 项目根目录
 > 旧的 `raw.githubusercontent.com/.../output/...` 链接不再更新；需要定时执行时请使用 Docker、命令行或 GUI。
 
 <a href="https://github.com/Guovin/iptv-api/fork" target="_blank" rel="noopener noreferrer">Fork 本项目</a>后，先在 `Settings → Pages` 中将发布源设置为 `GitHub Actions`，再手动运行
-`Generate playlist manually`。播放器在线使用请打开 Pages 页面获取相应的结果地址。Release 地址用于下载和保存结果文件，整个过程不会产生 Git 提交。
+`Generate playlist manually`。播放器在线使用请打开 Pages 页面获取相应的结果地址；页面可预览文件，下载按钮指向本次 Release 附件。整个过程不会产生 Git 提交。
 
 ```text
 https://您的GitHub用户名.github.io/仓库名/result.m3u

@@ -270,7 +270,7 @@ https://您的GitHub用户名.github.io/仓库名/result.txt
 https://您的GitHub用户名.github.io/仓库名/epg.gz
 ```
 
-由于存在重定向和下载响应头，建议使用 Release 下载和保存结果文件，不要作为播放器订阅地址。附件下载地址格式如下：
+Pages 结果页可直接预览文件，下载按钮指向本次 Release 附件，便于按运行批次统计下载量和保存历史结果；由于存在重定向和下载响应头，不建议把 Release 地址作为播放器订阅地址。附件下载地址格式如下：
 
 ```text
 https://github.com/您的GitHub用户名/仓库名/releases/download/playlist-20260920-103000-utc-plus-0800/result.m3u
@@ -278,7 +278,7 @@ https://github.com/您的GitHub用户名/仓库名/releases/download/playlist-20
 
 `result.txt` 始终发布；`result.m3u` 和 `epg.gz` 仅在对应功能开启且成功生成时存在。M3U 内的 EPG 地址使用 Pages 链接。
 
-Pages 结果页中的“复制链接”始终复制播放器可使用的原始文件地址；“预览内容”通过站内预览页强制按 UTF-8 解码，避免浏览器直接打开 M3U 时因响应缺少字符集而显示乱码。`epg.gz` 是压缩文件，只提供原始文件入口。
+Pages 结果页中的每个文件均提供复制链接、预览内容和下载文件操作。预览页按 UTF-8 显示文本，`epg.gz` 会先在浏览器中解压；复制链接仍会得到原始 Pages 文件地址。
 
 Release 和 Fork 跳转地址均从运行工作流的仓库信息生成：主仓库页面指向 `Guovin/iptv-api`，Fork 仓库页面指向该用户自己的 Fork；主仓库结果说明中的 `Fork 项目` 可直接跳转到主仓库的 Fork 创建页。
 

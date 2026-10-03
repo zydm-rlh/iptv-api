@@ -1,3 +1,4 @@
+import gzip
 import os
 import tempfile
 import unittest
@@ -44,12 +45,19 @@ class PublishResultsTests(unittest.TestCase):
             },
         )
 
-    def test_prepares_only_canonical_public_assets(self):
+    def test_prepares_canonical_results_and_known_logs(self):
         self._write("custom/user_result.txt", b"Demo,http://example.com\n")
         self._write("custom/user_result.m3u", b"#EXTM3U\n")
         self._write("ipv4/result.txt", b"IPv4,http://example.com\n")
         self._write("epg/epg.gz", b"gzip-data")
-        self._write("log/log.log", b"private log")
+        log_names = (
+            "log.log", "runtime.jsonl", "result.log", "result.jsonl",
+            "speed_test.log", "speed_test.jsonl", "statistic.log",
+            "statistic.jsonl", "unmatch.log", "unmatch.jsonl",
+        )
+        for name in log_names:
+            self._write(f"log/{name}", b"" if name == "unmatch.log" else b"log data")
+        self._write("log/private.log", b"excluded log")
         self._write("data/channel_results.db", b"private database")
 
         destination = self.workspace / "release-assets"
@@ -65,9 +73,11 @@ class PublishResultsTests(unittest.TestCase):
                 "result.m3u",
                 "ipv4.txt",
                 "epg.gz",
+                *log_names,
             },
         )
-        self.assertNotIn("log.log", {path.name for path in destination.iterdir()})
+        self.assertEqual((destination / "unmatch.log").stat().st_size, 0)
+        self.assertNotIn("private.log", {path.name for path in destination.iterdir()})
         self.assertNotIn("channel_results.db", {path.name for path in destination.iterdir()})
 
     def test_rejects_final_file_outside_output_directory(self):
@@ -106,8 +116,18 @@ class PublishResultsTests(unittest.TestCase):
             "ipv4.m3u": b"#EXTM3U\n",
             "ipv6.txt": b"IPv6,http://example.com\n",
             "ipv6.m3u": b"#EXTM3U\n",
-            "epg.gz": b"gzip-data",
+            "epg.gz": gzip.compress(b"<tv></tv>"),
             "epg.xml": b"<tv></tv>",
+            "result.log": b"result log",
+            "unmatch.log": b"",
+            "log.log": b"runtime log",
+            "runtime.jsonl": b"{}\n",
+            "result.jsonl": b"{}\n",
+            "speed_test.log": b"speed log",
+            "speed_test.jsonl": b"{}\n",
+            "statistic.log": b"statistics log",
+            "statistic.jsonl": b"{}\n",
+            "unmatch.jsonl": b"{}\n",
         }
         for name, content in asset_contents.items():
             (assets / name).write_bytes(content)
@@ -122,10 +142,14 @@ class PublishResultsTests(unittest.TestCase):
             release_tag="playlist-20260920-200000-utc-plus-0800",
         )
 
+        page_names = set(asset_contents) - {
+            "log.log", "runtime.jsonl", "result.jsonl", "speed_test.log",
+            "speed_test.jsonl", "statistic.log", "statistic.jsonl", "unmatch.jsonl",
+        }
         self.assertEqual(
             {path.name for path in site.iterdir()},
             {
-                *asset_contents,
+                *page_names,
                 "favicon.svg",
                 "index.html",
                 "viewer.html",
@@ -133,59 +157,80 @@ class PublishResultsTests(unittest.TestCase):
         )
         self.assertEqual(result["pages_base_url"], "https://owner.github.io/repository")
         index = (site / "index.html").read_text(encoding="utf-8")
-        for name in asset_contents:
+        for name in page_names:
             self.assertIn(f"https://owner.github.io/repository/{name}", index)
-        self.assertIn("完整结果 / All networks", index)
-        self.assertIn("播放器在线使用请复制下方对应的 Pages 结果地址", index)
+            self.assertIn(f'data-copy-url="https://owner.github.io/repository/{name}"', index)
+        self.assertIn('<span lang="zh-CN">完整结果</span><span lang="en">All networks</span>', index)
+        self.assertIn("复制在线订阅地址，或预览并下载本次生成的文件", index)
         self.assertIn("完整播放列表", index)
         self.assertIn("完整文本列表", index)
-        self.assertIn("IPv4 结果 / IPv4 only", index)
-        self.assertIn("IPv6 结果 / IPv6 only", index)
-        self.assertIn("节目单 / Programme guide", index)
+        self.assertIn('<span lang="zh-CN">IPv4 结果</span><span lang="en">IPv4 only</span>', index)
+        self.assertIn('<span lang="zh-CN">IPv6 结果</span><span lang="en">IPv6 only</span>', index)
+        self.assertIn('<span lang="zh-CN">节目单</span><span lang="en">Programme guide</span>', index)
+        self.assertIn('<span lang="zh-CN">结果记录</span><span lang="en">Result records</span>', index)
+        for name in page_names:
+            self.assertIn(
+                f'href="https://owner.github.io/repository/viewer.html?file={name}"',
+                index,
+            )
+            self.assertIn(
+                f'href="https://github.com/owner/repository/releases/download/playlist-20260920-200000-utc-plus-0800/{name}" target="_blank" rel="noopener noreferrer"',
+                index,
+            )
+        for name in set(asset_contents) - page_names:
+            self.assertNotIn(f"https://owner.github.io/repository/{name}", index)
         self.assertNotIn("发布信息 / Publication details", index)
         self.assertNotIn("manifest.json", index)
         self.assertNotIn("SHA256SUMS.txt", index)
-        self.assertIn("下载保存 / Download &amp; Save", index)
-        self.assertNotIn("Download &amp; save", index)
+        self.assertNotIn('class="usage"', index)
+        self.assertNotIn("Player subscription", index)
+        self.assertNotIn("Download &amp; Save", index)
         self.assertIn(
             "https://github.com/owner/repository/releases/tag/playlist-20260920-200000-utc-plus-0800",
             index,
         )
         self.assertNotIn("https://github.com/Guovin/iptv-api/releases", index)
         self.assertIn('class="inline-release-link"', index)
-        self.assertIn('aria-label="打开 owner/repository Release">Release</a>', index)
+        self.assertIn('rel="noopener noreferrer">Release</a>', index)
         self.assertNotIn(">owner/repository Release</a>", index)
         self.assertIn("2026-09-20T12:00:00+00:00", index)
         self.assertIn('<link rel="icon" href="favicon.svg" type="image/svg+xml">', index)
         self.assertIn('class="brand-mark" src="favicon.svg"', index)
-        self.assertEqual(index.count('class="card-action copy-action"'), 8)
-        self.assertEqual(index.count('target="_blank" rel="noopener noreferrer"'), 9)
+        self.assertEqual(index.count('class="card-action copy-action"'), 10)
+        self.assertEqual(index.count('class="card-action preview-action"'), 10)
+        self.assertEqual(index.count('class="card-action download-action"'), 10)
         self.assertIn(
             'href="https://owner.github.io/repository/viewer.html?file=result.m3u"',
             index,
         )
         self.assertIn(
-            'href="https://owner.github.io/repository/epg.gz"',
+            'href="https://github.com/owner/repository/releases/download/playlist-20260920-200000-utc-plus-0800/epg.gz"',
             index,
         )
         viewer = (site / "viewer.html").read_text(encoding="utf-8")
         self.assertIn('new TextDecoder("utf-8").decode(buffer)', viewer)
-        self.assertIn("文件不存在或不支持浏览器预览。\\nThe file", viewer)
+        self.assertIn("文件不存在或不支持浏览器预览。", viewer)
         self.assertIn('"result.m3u"', viewer)
-        self.assertNotIn('"epg.gz"', viewer)
+        self.assertIn('"epg.gz"', viewer)
+        self.assertIn('new DecompressionStream("gzip")', viewer)
+        self.assertIn('"unmatch.log"', viewer)
+        self.assertNotIn('"unmatch.jsonl"', viewer)
         self.assertIn('navigator.clipboard.writeText(value)', index)
-        self.assertIn('已复制 / Copied', index)
+        self.assertIn('label.textContent = document.documentElement.lang === "en" ? "Copied" : "已复制"', index)
         self.assertIn('role="status" aria-live="polite"', index)
-        self.assertIn('.hero-copy [lang="en"] { display: block;', index)
+        self.assertIn('html[lang="zh-CN"] [lang="en"]', index)
+        self.assertIn('data-language="en"', index)
+        self.assertIn('localStorage.getItem("iptv-pages-language")', index)
+        self.assertIn('data-language="en"', viewer)
         self.assertIn(
             "grid-template-columns: repeat(2, minmax(0, 1fr))",
             index,
         )
-        self.assertIn('@media (max-width: 980px)', index)
+        self.assertIn('.download-action { grid-column: 1 / -1;', index)
         self.assertNotIn("结果已发布 / Results published", index)
         self.assertNotIn("secondary-action", index)
         self.assertNotIn("border: 1px solid rgba(255, 255, 255, 0.42)", index)
-        self.assertNotIn("主仓库结果说明 / Upstream results notice", index)
+        self.assertNotIn("Upstream results notice", index)
         self.assertNotIn("fonts.googleapis.com", index)
         self.assertNotIn("CDN accelerated links", index)
 
@@ -203,7 +248,7 @@ class PublishResultsTests(unittest.TestCase):
         )
 
         index = (site / "index.html").read_text(encoding="utf-8")
-        self.assertIn("主仓库结果说明 / Upstream results notice", index)
+        self.assertIn('<span lang="zh-CN">主仓库结果说明</span><span lang="en">Upstream results notice</span>', index)
         self.assertIn("主仓库发布的 Pages 链接和 Release 结果仅用于功能测试", index)
         self.assertIn(
             "https://github.com/Guovin/iptv-api/releases/tag/playlist-20260920-200100-utc-plus-0800",
@@ -230,9 +275,11 @@ class PublishResultsTests(unittest.TestCase):
 
         index = (site / "index.html").read_text(encoding="utf-8")
         self.assertIn("https://owner.github.io/repository/result.txt", index)
-        self.assertNotIn("IPv4 结果 / IPv4 only", index)
-        self.assertNotIn("IPv6 结果 / IPv6 only", index)
-        self.assertNotIn("节目单 / Programme guide", index)
+        self.assertIn('href="./result.txt" download="result.txt"', index)
+        self.assertNotIn("IPv4 only", index)
+        self.assertNotIn("IPv6 only", index)
+        self.assertNotIn("Programme guide", index)
+        self.assertNotIn("Run logs", index)
         self.assertNotIn("发布信息 / Publication details", index)
 
     def test_rejects_invalid_pages_url(self):
@@ -273,6 +320,7 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn("actions/configure-pages@v5", workflow)
         self.assertIn("actions/upload-pages-artifact@v4", workflow)
         self.assertIn("actions/deploy-pages@v4", workflow)
+        self.assertIn("needs: [generate, publish-release]", workflow)
         self.assertNotIn('release_title="$RELEASE_TITLE (test only)"', workflow)
         self.assertIn("pages_base_url: ${{ steps.generate.outputs.pages_base_url }}", workflow)
         self.assertIn("release_title: ${{ steps.release.outputs.title }}", workflow)
@@ -292,6 +340,7 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn("[Fork 项目](https://github.com/Guovin/iptv-api/fork)", workflow)
         self.assertIn('echo "在线链接 / Online links"', workflow)
         self.assertIn('echo "下载链接 / Download links"', workflow)
+        self.assertIn('echo "- Pages result page (preview/download): $PAGES_BASE"', workflow)
         self.assertIn('echo "- Pages TXT: $PAGES_BASE/result.txt"', workflow)
         self.assertIn('echo "- Pages M3U: $PAGES_BASE/result.m3u"', workflow)
         self.assertIn('echo "- Release TXT: $RELEASE_BASE/result.txt"', workflow)

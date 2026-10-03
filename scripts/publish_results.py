@@ -22,6 +22,20 @@ OPTIONAL_ASSETS = {
     "epg/epg.gz": "epg.gz",
 }
 
+LOG_ASSETS = {
+    "log/log.log": "log.log",
+    "log/runtime.jsonl": "runtime.jsonl",
+    "log/result.log": "result.log",
+    "log/result.jsonl": "result.jsonl",
+    "log/speed_test.log": "speed_test.log",
+    "log/speed_test.jsonl": "speed_test.jsonl",
+    "log/statistic.log": "statistic.log",
+    "log/statistic.jsonl": "statistic.jsonl",
+    "log/unmatch.log": "unmatch.log",
+    "log/unmatch.jsonl": "unmatch.jsonl",
+}
+PAGE_LOG_ASSETS = {"result.log", "unmatch.log"}
+
 PAGE_ASSET_GROUPS = (
     {
         "id": "all-results",
@@ -57,10 +71,20 @@ PAGE_ASSET_GROUPS = (
         "id": "epg-results",
         "eyebrow": "EPG",
         "title": "节目单 / Programme guide",
-        "description": "为支持 EPG 的播放器提供节目单数据，GZIP 格式体积更小。",
+        "description": "为支持 EPG 的播放器提供节目单数据，GZIP 格式体积更小。 / Programme guide data for EPG players; GZIP uses less space.",
         "assets": (
             ("epg.gz", "GZIP", "EPG 压缩文件", "Compressed EPG"),
             ("epg.xml", "XML", "EPG XML 文件", "EPG XML data"),
+        ),
+    },
+    {
+        "id": "run-logs",
+        "eyebrow": "日志 / Logs",
+        "title": "结果记录 / Result records",
+        "description": "查看结果与未匹配频道记录；完整运行日志可在工作流和 Release 中查看。 / View result and unmatched channel records; full run logs are available in the workflow and Release.",
+        "assets": (
+            ("result.log", "LOG", "结果日志", "Result log"),
+            ("unmatch.log", "LOG", "未匹配频道", "Unmatched channels"),
         ),
     },
 )
@@ -76,6 +100,8 @@ PREVIEWABLE_PAGE_ASSETS = {
     "ipv6.m3u",
     "ipv6.txt",
     "epg.xml",
+    "epg.gz",
+    *PAGE_LOG_ASSETS,
 }
 
 
@@ -87,7 +113,7 @@ def _normalize_http_url(value, label):
     return url
 
 
-def _resolve_output_file(path, output_dir):
+def _resolve_output_file(path, output_dir, allow_empty=False):
     candidate = path if path.is_absolute() else Path.cwd() / path
     output_root = output_dir.resolve(strict=True)
     resolved = candidate.resolve(strict=True)
@@ -98,7 +124,7 @@ def _resolve_output_file(path, output_dir):
     if candidate.is_symlink() or not resolved.is_file():
         raise ValueError(f"Release input must be a regular file: {path}")
     size = resolved.stat().st_size
-    if size <= 0:
+    if size <= 0 and not allow_empty:
         raise ValueError(f"Release input is empty: {path}")
     if size > MAX_RELEASE_ASSET_BYTES:
         raise ValueError(f"Release input exceeds the GitHub release asset limit: {path}")
@@ -124,7 +150,19 @@ def build_release_metadata(time_zone_name, now=None):
     }
 
 
-def _render_page_sections(pages_base_url, copied_names):
+def _localized(chinese, english):
+    return (
+        f'<span lang="zh-CN">{html.escape(chinese)}</span>'
+        f'<span lang="en">{html.escape(english)}</span>'
+    )
+
+
+def _localized_label(value):
+    parts = value.split(" / ", 1)
+    return _localized(*parts) if len(parts) == 2 else html.escape(value)
+
+
+def _render_page_sections(pages_base_url, copied_names, release_download_base=""):
     available_names = set(copied_names)
     sections = []
     copy_icon = (
@@ -132,9 +170,15 @@ def _render_page_sections(pages_base_url, copied_names):
         '<rect x="6.5" y="6.5" width="9" height="9" rx="2"/>'
         '<path d="M4.5 13.5h-1a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>'
     )
-    arrow_icon = (
+    preview_icon = (
         '<svg viewBox="0 0 20 20" aria-hidden="true">'
-        '<path d="M7.5 4.5h8v8M15 5 5 15"/></svg>'
+        '<path d="M2 10s3-5.5 8-5.5 8 5.5 8 5.5-3 5.5-8 5.5S2 10 2 10Z"/>'
+        '<circle cx="10" cy="10" r="2.5"/></svg>'
+    )
+    download_icon = (
+        '<svg viewBox="0 0 20 20" aria-hidden="true">'
+        '<path d="M10 2.5v9m-3.5-3.5L10 11.5 13.5 8"/>'
+        '<path d="M3.5 12.5v3a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-3"/></svg>'
     )
     for group in PAGE_ASSET_GROUPS:
         cards = []
@@ -143,25 +187,30 @@ def _render_page_sections(pages_base_url, copied_names):
                 continue
             url = f"{pages_base_url}/{name}"
             escaped_url = html.escape(url, quote=True)
-            if name in PREVIEWABLE_PAGE_ASSETS:
-                open_url = f"{pages_base_url}/viewer.html?file={quote(name, safe='')}"
-                open_label = "预览内容 / Preview"
-            else:
-                open_url = url
-                open_label = "打开文件 / Open"
-            escaped_open_url = html.escape(open_url, quote=True)
+            preview_url = f"{pages_base_url}/viewer.html?file={quote(name, safe='')}"
+            escaped_preview_url = html.escape(preview_url, quote=True)
+            download_url = (
+                f"{release_download_base}/{quote(name, safe='')}"
+                if release_download_base else f"./{quote(name, safe='')}"
+            )
+            download_attributes = (
+                ' target="_blank" rel="noopener noreferrer"'
+                if release_download_base else f' download="{html.escape(name, quote=True)}"'
+            )
             cards.append(f"""
         <article class="result-card">
           <span class="file-type">{html.escape(file_type)}</span>
-          <span class="result-name">{html.escape(label)}</span>
-          <span class="result-name-en">{html.escape(english_label)}</span>
+          <span class="result-name">{_localized(label, english_label)}</span>
           <code>{escaped_url}</code>
           <span class="result-actions">
             <button class="card-action copy-action" type="button" data-copy-url="{escaped_url}">
-              {copy_icon}<span class="action-label">复制链接 / Copy</span>
+              {copy_icon}<span class="action-label">{_localized('复制链接', 'Copy link')}</span>
             </button>
-            <a class="card-action open-action" href="{escaped_open_url}" target="_blank" rel="noopener noreferrer">
-              <span>{open_label}</span>{arrow_icon}
+            <a class="card-action preview-action" href="{escaped_preview_url}" target="_blank" rel="noopener noreferrer">
+              {preview_icon}<span>{_localized('预览内容', 'Preview')}</span>
+            </a>
+            <a class="card-action download-action" href="{html.escape(download_url, quote=True)}"{download_attributes}>
+              {download_icon}<span>{_localized('下载文件', 'Download')}</span>
             </a>
           </span>
         </article>""")
@@ -170,9 +219,9 @@ def _render_page_sections(pages_base_url, copied_names):
         sections.append(f"""
     <section class="result-section" aria-labelledby="{group['id']}">
       <div class="section-heading">
-        <p class="eyebrow">{html.escape(group['eyebrow'])}</p>
-        <h2 id="{group['id']}">{html.escape(group['title'])}</h2>
-        <p>{html.escape(group['description'])}</p>
+        <p class="eyebrow">{_localized_label(group['eyebrow'])}</p>
+        <h2 id="{group['id']}">{_localized_label(group['title'])}</h2>
+        <p>{_localized_label(group['description'])}</p>
       </div>
       <div class="result-grid">{''.join(cards)}
       </div>
@@ -192,9 +241,16 @@ def _render_page_viewer(copied_names):
   <meta name="theme-color" content="#1d4ed8">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>IPTV-API 文件预览 / File preview</title>
+  <script>
+    try {{
+      document.documentElement.lang = localStorage.getItem("iptv-pages-language") ||
+        (navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en");
+    }} catch (error) {{ document.documentElement.lang = "zh-CN"; }}
+  </script>
   <style>
     :root {{ color-scheme: light dark; --page: #eff6ff; --surface: #ffffff; --text: #172554; --muted: #475569; --border: #bfdbfe; --primary: #1d4ed8; }}
     * {{ box-sizing: border-box; }}
+    html[lang="zh-CN"] [lang="en"], html[lang="en"] [lang="zh-CN"] {{ display: none; }}
     body {{ min-height: 100vh; margin: 0; background: var(--page); color: var(--text); font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
     main {{ width: min(1200px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 40px; }}
     header {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }}
@@ -204,6 +260,10 @@ def _render_page_viewer(copied_names):
     a {{ color: var(--primary); font-weight: 700; text-underline-offset: 3px; }}
     a:focus-visible {{ outline: 3px solid var(--primary); outline-offset: 3px; border-radius: 4px; }}
     .actions {{ display: flex; flex: none; flex-wrap: wrap; gap: 12px; }}
+    .language-switch {{ display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; }}
+    .language-switch button {{ min-width: 42px; padding: 3px 7px; border: 0; border-radius: 999px; background: transparent; color: var(--text); cursor: pointer; }}
+    .language-switch button[aria-pressed="true"] {{ background: var(--primary); color: #ffffff; }}
+    .language-switch button:focus-visible {{ outline: 3px solid var(--primary); outline-offset: 3px; }}
     pre {{ min-height: 320px; margin: 0; padding: 20px; overflow: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 10px 30px rgba(30, 64, 175, 0.08); color: var(--text); font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }}
     @media (max-width: 700px) {{ main {{ width: min(100% - 24px, 1200px); padding-top: 16px; }} header {{ align-items: flex-start; flex-direction: column; }} }}
     @media (prefers-color-scheme: dark) {{ :root {{ --page: #081225; --surface: #0f1f3a; --text: #eff6ff; --muted: #cbd5e1; --border: #27446f; --primary: #93c5fd; }} }}
@@ -213,15 +273,19 @@ def _render_page_viewer(copied_names):
   <main>
     <header>
       <div class="heading">
-        <h1 id="file-name">文件预览 / File preview</h1>
-        <p class="subtitle">强制使用 UTF-8 解码，仅用于浏览器查看；播放器仍应使用原始 Pages 链接。</p>
+        <h1 id="file-name">{_localized('文件预览', 'File preview')}</h1>
+        <p class="subtitle">{_localized('使用 UTF-8 解码，仅用于浏览器查看；播放器仍应使用原始 Pages 链接。', 'Decoded as UTF-8 for browser viewing; players should use the original Pages URL.')}</p>
       </div>
       <nav class="actions" aria-label="预览操作 / Preview actions">
-        <a href="./">返回结果页 / Back</a>
-        <a id="raw-link" href="./">打开原始文件 / Raw file</a>
+        <a href="./">{_localized('返回结果页', 'Back to results')}</a>
+        <a id="raw-link" href="./">{_localized('打开原始文件', 'Raw file')}</a>
+        <span class="language-switch" role="group" aria-label="Language / 语言">
+          <button type="button" data-language="zh-CN" aria-pressed="true">中文</button>
+          <button type="button" data-language="en" aria-pressed="false">EN</button>
+        </span>
       </nav>
     </header>
-    <pre id="content" aria-live="polite">正在加载 / Loading…</pre>
+    <pre id="content" aria-live="polite">{_localized('正在加载…', 'Loading…')}</pre>
   </main>
   <script>
     const allowedFiles = new Set({allowed_json});
@@ -229,26 +293,48 @@ def _render_page_viewer(copied_names):
     const heading = document.getElementById("file-name");
     const content = document.getElementById("content");
     const rawLink = document.getElementById("raw-link");
+    const languageButtons = document.querySelectorAll("[data-language]");
+
+    function setLanguage(language) {{
+      document.documentElement.lang = language;
+      document.title = allowedFiles.has(fileName) ? `${{fileName}} · IPTV-API` :
+        (language === "en" ? "IPTV-API File preview" : "IPTV-API 文件预览");
+      languageButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.language === language)));
+      try {{ localStorage.setItem("iptv-pages-language", language); }} catch (error) {{}}
+      if (!allowedFiles.has(fileName)) {{
+        heading.textContent = language === "en" ? "Preview unavailable" : "无法预览";
+        content.textContent = language === "en" ? "The file is unavailable or cannot be previewed." : "文件不存在或不支持浏览器预览。";
+      }} else if (content.dataset.failed === "true") {{
+        content.textContent = language === "en" ? "Loading failed. Open the raw file or try again later." : "加载失败，请打开原始文件或稍后重试。";
+      }}
+    }}
+
+    languageButtons.forEach((button) => button.addEventListener("click", () => setLanguage(button.dataset.language)));
+    setLanguage(document.documentElement.lang === "en" ? "en" : "zh-CN");
 
     if (!allowedFiles.has(fileName)) {{
-      heading.textContent = "无法预览 / Preview unavailable";
-      content.textContent = "文件不存在或不支持浏览器预览。\\nThe file is unavailable or cannot be previewed.";
       rawLink.hidden = true;
     }} else {{
       const rawUrl = `./${{encodeURIComponent(fileName)}}`;
       heading.textContent = fileName;
-      document.title = `${{fileName}} · IPTV-API`;
       rawLink.href = rawUrl;
       fetch(rawUrl, {{ cache: "no-cache" }})
         .then((response) => {{
           if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
           return response.arrayBuffer();
         }})
-        .then((buffer) => {{
+        .then(async (buffer) => {{
+          if (fileName === "epg.gz") {{
+            if (typeof DecompressionStream === "undefined") throw new Error("gzip preview unavailable");
+            buffer = await new Response(
+              new Blob([buffer]).stream().pipeThrough(new DecompressionStream("gzip"))
+            ).arrayBuffer();
+          }}
           content.textContent = new TextDecoder("utf-8").decode(buffer);
         }})
         .catch(() => {{
-          content.textContent = "加载失败，请打开原始文件或稍后重试。\\nLoading failed. Open the raw file or try again later.";
+          content.dataset.failed = "true";
+          setLanguage(document.documentElement.lang);
         }});
     }}
   </script>
@@ -286,6 +372,10 @@ def prepare_release_assets(
         candidate = output_dir / relative_path
         if candidate.exists():
             sources.append((_resolve_output_file(candidate, output_dir), asset_name))
+    for relative_path, asset_name in LOG_ASSETS.items():
+        candidate = output_dir / relative_path
+        if candidate.exists():
+            sources.append((_resolve_output_file(candidate, output_dir, allow_empty=True), asset_name))
 
     seen_names = set()
     for source, asset_name in sources:
@@ -315,7 +405,13 @@ def prepare_pages_site(
 
     pages_base_url = _normalize_http_url(pages_base_url, "Pages base URL")
     copied_names = []
-    sources = sorted(assets_directory.iterdir(), key=lambda item: item.name)
+    sources = sorted(
+        (
+            item for item in assets_directory.iterdir()
+            if item.name not in LOG_ASSETS.values() or item.name in PAGE_LOG_ASSETS
+        ),
+        key=lambda item: item.name,
+    )
     favicon_candidate = Path(favicon_path)
     if favicon_candidate.is_symlink():
         raise ValueError(f"Pages favicon must be a regular file: {favicon_path}")
@@ -341,18 +437,20 @@ def prepare_pages_site(
     repository = str(repository or "").strip()
     generated_at = str(generated_at or "").strip()
     release_tag = str(release_tag or "").strip()
-    release_guidance = "<p>保存结果请前往当前仓库的 Release 下载对应文件。</p>"
+    release_footer = ""
+    release_download_base = ""
     main_repository_notice = ""
     if REPOSITORY_PATTERN.fullmatch(repository):
+        if RELEASE_TAG_PATTERN.fullmatch(release_tag):
+            release_download_base = f"https://github.com/{repository}/releases/download/{release_tag}"
         release_path = (
             f"releases/tag/{release_tag}"
             if RELEASE_TAG_PATTERN.fullmatch(release_tag)
             else "releases"
         )
         release_url = f"https://github.com/{repository}/{release_path}"
-        release_guidance = f"""<p>保存结果请前往
-          <a class="inline-release-link" href="{html.escape(release_url, quote=True)}" target="_blank" rel="noopener noreferrer" aria-label="打开 {html.escape(repository, quote=True)} Release">Release</a>
-          下载对应文件。</p>"""
+        release_footer = f"""<p>{_localized('本次运行存档：', 'Run archive: ')}
+          <a class="inline-release-link" href="{html.escape(release_url, quote=True)}" target="_blank" rel="noopener noreferrer">Release</a></p>"""
     if repository.lower() == "guovin/iptv-api":
         fork_url = f"https://github.com/{repository}/fork"
         escaped_fork_url = html.escape(fork_url, quote=True)
@@ -360,21 +458,20 @@ def prepare_pages_site(
     <aside class="test-notice" role="note" aria-labelledby="test-notice-title">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5h.01"/></svg>
       <div>
-        <h2 id="test-notice-title">主仓库结果说明 / Upstream results notice</h2>
-        <p>主仓库发布的 Pages 链接和 Release 结果仅用于功能测试，不保证内容完整性、可用性或持续更新。实际使用请
+        <h2 id="test-notice-title">{_localized('主仓库结果说明', 'Upstream results notice')}</h2>
+        <p lang="zh-CN">主仓库发布的 Pages 链接和 Release 结果仅用于功能测试，不保证内容完整性、可用性或持续更新。实际使用请
           <a class="inline-fork-link" href="{escaped_fork_url}" target="_blank" rel="noopener noreferrer">Fork 项目</a>
-          并运行自己的工作流。<br><span lang="en">Pages links and Release results from the upstream repository are for functional testing only.
+          并运行自己的工作流。</p><p lang="en">Pages links and Release results from the upstream repository are for functional testing only.
           <a class="inline-fork-link" href="{escaped_fork_url}" target="_blank" rel="noopener noreferrer">Fork the project</a>
-          and run your own workflow for actual use.</span></p>
+          and run your own workflow for actual use.</p>
       </div>
     </aside>"""
-    generated_text = html.escape(generated_at or "当前工作流 / Current workflow run")
     generated_markup = (
-        f'<time datetime="{html.escape(generated_at, quote=True)}">{generated_text}</time>'
+        f'<time datetime="{html.escape(generated_at, quote=True)}">{html.escape(generated_at)}</time>'
         if generated_at
-        else generated_text
+        else _localized("当前工作流", "Current workflow run")
     )
-    sections_html = _render_page_sections(pages_base_url, copied_names)
+    sections_html = _render_page_sections(pages_base_url, copied_names, release_download_base)
     index_html = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -385,6 +482,12 @@ def prepare_pages_site(
   <meta name="description" content="IPTV-API generated playlist, IPv4, IPv6, and EPG result links.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>IPTV-API 更新结果 / Playlist results</title>
+  <script>
+    try {{
+      document.documentElement.lang = localStorage.getItem("iptv-pages-language") ||
+        (navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en");
+    }} catch (error) {{ document.documentElement.lang = "zh-CN"; }}
+  </script>
   <style>
     :root {{
       color-scheme: light dark;
@@ -403,6 +506,7 @@ def prepare_pages_site(
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
+    html[lang="zh-CN"] [lang="en"], html[lang="en"] [lang="zh-CN"] {{ display: none; }}
     body {{
       min-height: 100vh;
       margin: 0;
@@ -436,6 +540,11 @@ def prepare_pages_site(
       content: "";
     }}
     .brand {{ display: inline-flex; align-items: center; gap: 10px; margin: 0 0 24px; font-weight: 750; letter-spacing: -0.02em; }}
+    .hero-top {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }}
+    .language-switch {{ display: inline-flex; gap: 3px; padding: 3px; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 999px; }}
+    .language-switch button {{ min-width: 46px; padding: 5px 10px; border: 0; border-radius: 999px; background: transparent; color: #dbeafe; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }}
+    .language-switch button[aria-pressed="true"] {{ background: #ffffff; color: #1e3a8a; }}
+    .language-switch button:focus-visible {{ outline: 3px solid #ffffff; outline-offset: 3px; }}
     .brand-mark {{
       width: 34px;
       height: 34px;
@@ -445,13 +554,9 @@ def prepare_pages_site(
     .hero-content {{ position: relative; z-index: 1; max-width: 1000px; }}
     h1 {{ max-width: 680px; margin: 0; font-size: clamp(34px, 5vw, 56px); line-height: 1.02; letter-spacing: -0.05em; }}
     .hero-copy {{ max-width: 100%; margin: 16px 0 0; color: #dbeafe; font-size: clamp(16px, 1.7vw, 18px); text-wrap: pretty; }}
-    .hero-copy [lang="en"] {{ display: block; margin-top: 4px; color: #bfdbfe; }}
+    .hero-copy [lang="en"] {{ color: #bfdbfe; }}
     .hero-meta {{ display: flex; flex-wrap: wrap; gap: 16px 28px; margin-top: 24px; color: #bfdbfe; font-size: 13px; }}
     .hero-meta strong {{ display: block; color: #ffffff; font-size: 18px; }}
-    .usage {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 24px 0 48px; }}
-    .usage-card {{ padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: 0 10px 30px rgba(30, 64, 175, 0.07); backdrop-filter: blur(12px); }}
-    .usage-card h2 {{ margin: 0 0 8px; font-size: 18px; letter-spacing: -0.02em; }}
-    .usage-card p {{ margin: 0; color: var(--muted); }}
     .inline-release-link {{ color: var(--primary); font-weight: 750; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }}
     .inline-release-link:hover {{ color: var(--primary-strong); }}
     .inline-fork-link {{ color: #92400e; font-weight: 750; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }}
@@ -483,12 +588,11 @@ def prepare_pages_site(
     .result-card:hover {{ border-color: var(--primary); box-shadow: 0 14px 32px rgba(30, 64, 175, 0.13); transform: translateY(-2px); }}
     .file-type {{ grid-column: 2; grid-row: 1 / span 2; align-self: start; padding: 5px 9px; border-radius: 999px; background: var(--primary-soft); color: var(--primary-strong); font-size: 11px; font-weight: 800; letter-spacing: 0.04em; }}
     .result-name {{ grid-column: 1; font-size: 17px; font-weight: 760; letter-spacing: -0.02em; }}
-    .result-name-en {{ grid-column: 1; color: var(--muted); font-size: 13px; }}
     .result-card code {{ grid-column: 1 / -1; min-width: 0; margin-top: 14px; padding: 10px 12px; overflow-wrap: anywhere; border-radius: 10px; background: var(--page); color: var(--primary-strong); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
     .result-actions {{ display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 10px; margin-top: 14px; }}
     .card-action {{
       display: inline-flex;
-      min-height: 42px;
+      min-height: 44px;
       align-items: center;
       justify-content: center;
       gap: 7px;
@@ -501,29 +605,25 @@ def prepare_pages_site(
       transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
     }}
     .card-action svg {{ width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }}
-    .copy-action {{ background: transparent; color: var(--primary); }}
+    .copy-action {{ background: var(--surface-strong); color: var(--primary); }}
     .copy-action:hover {{ border-color: var(--primary); background: var(--primary-soft); }}
     .copy-action.is-copied {{ border-color: #16a34a; background: #dcfce7; color: #166534; }}
-    .open-action {{ border-color: var(--primary); background: var(--primary); color: #ffffff; }}
-    .open-action:hover {{ border-color: var(--primary-strong); background: var(--primary-strong); }}
+    .preview-action {{ border-color: var(--border); background: var(--primary-soft); color: var(--primary-strong); }}
+    .preview-action:hover {{ border-color: var(--primary); background: #bfdbfe; }}
+    .download-action {{ border-color: #1d4ed8; background: #1d4ed8; color: #ffffff; }}
+    .download-action:hover {{ border-color: #1e40af; background: #1e40af; }}
     .sr-only {{ position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }}
     footer {{ display: flex; justify-content: space-between; gap: 24px; margin-top: 56px; padding: 24px 0 8px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }}
     footer p {{ margin: 0; }}
-    @media (max-width: 980px) {{
-      .usage {{ grid-template-columns: 1fr; }}
-    }}
     @media (max-width: 700px) {{
       .page-shell {{ width: min(100% - 24px, 1120px); padding-top: 12px; }}
       .hero {{ padding: 24px 20px 28px; border-radius: 20px; }}
       .brand {{ margin-bottom: 22px; }}
       .result-grid {{ grid-template-columns: 1fr; }}
-      .usage {{ margin-bottom: 40px; }}
       .result-section {{ margin-top: 40px; }}
       .result-actions {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .download-action {{ grid-column: 1 / -1; }}
       footer {{ flex-direction: column; }}
-    }}
-    @media (max-width: 420px) {{
-      .result-actions {{ grid-template-columns: 1fr; }}
     }}
     @media (prefers-color-scheme: dark) {{
       :root {{
@@ -545,8 +645,10 @@ def prepare_pages_site(
       .test-notice [lang="en"] {{ color: #fde68a; }}
       .inline-fork-link, .inline-fork-link:hover {{ color: #fde68a; }}
       .copy-action.is-copied {{ border-color: #4ade80; background: #153d2a; color: #bbf7d0; }}
-      .open-action {{ border-color: #2563eb; background: #2563eb; color: #ffffff; }}
-      .open-action:hover {{ border-color: #1d4ed8; background: #1d4ed8; }}
+      .preview-action {{ border-color: #36537a; background: #173663; color: #dbeafe; }}
+      .preview-action:hover {{ border-color: #93c5fd; background: #244976; }}
+      .download-action {{ border-color: #2563eb; background: #2563eb; color: #ffffff; }}
+      .download-action:hover {{ border-color: #3b82f6; background: #1d4ed8; }}
     }}
     @media (prefers-reduced-motion: reduce) {{
       html {{ scroll-behavior: auto; }}
@@ -559,40 +661,48 @@ def prepare_pages_site(
   <main class="page-shell">
     <header class="hero">
       <div class="hero-content">
-        <p class="brand"><img class="brand-mark" src="favicon.svg" alt="" width="34" height="34"> IPTV-API</p>
-        <h1>更新结果<br>Playlist results</h1>
-        <p class="hero-copy">播放器在线使用请复制下方对应的 Pages 结果地址。<span lang="en">For online player use, copy the applicable Pages result address below.</span></p>
+        <div class="hero-top">
+          <p class="brand"><img class="brand-mark" src="favicon.svg" alt="" width="34" height="34"> IPTV-API</p>
+          <div class="language-switch" role="group" aria-label="Language / 语言">
+            <button type="button" data-language="zh-CN" aria-pressed="true">中文</button>
+            <button type="button" data-language="en" aria-pressed="false">EN</button>
+          </div>
+        </div>
+        <h1>{_localized('更新结果', 'Playlist results')}</h1>
+        <p class="hero-copy">{_localized('复制在线订阅地址，或预览并下载本次生成的文件。', 'Copy a subscription URL, preview a file, or download this run’s results.')}</p>
         <div class="hero-meta">
-          <span><strong>{len(copied_names)}</strong>可用文件 / Available files</span>
-          <span><strong>生成时间 / Generated</strong>{generated_markup}</span>
+          <span><strong>{len(copied_names)}</strong>{_localized('可用文件', 'Available files')}</span>
+          <span><strong>{_localized('生成时间', 'Generated')}</strong>{generated_markup}</span>
         </div>
       </div>
     </header>
 
     {main_repository_notice}
 
-    <section class="usage" aria-label="使用建议 / Usage guidance">
-      <article class="usage-card">
-        <h2>播放器订阅 / Player subscription</h2>
-        <p>播放器在线使用请复制下方对应的 Pages 结果地址。</p>
-      </article>
-      <article class="usage-card">
-        <h2>下载保存 / Download &amp; Save</h2>
-        {release_guidance}
-      </article>
-    </section>
-
     {sections_html}
 
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
 
     <footer>
-      <p>Generated by IPTV-API without committing generated files to Git.</p>
-      <p>Pages 用于播放器订阅 · Release 用于下载保存</p>
+      <p>{_localized('由 IPTV-API 生成，结果文件未提交到 Git。', 'Generated by IPTV-API without committing result files to Git.')}</p>
+      {release_footer}
     </footer>
   </main>
   <script>
     const copyStatus = document.getElementById("copy-status");
+    const languageButtons = document.querySelectorAll("[data-language]");
+
+    function setLanguage(language) {{
+      document.documentElement.lang = language;
+      document.title = language === "en" ? "IPTV-API Playlist results" : "IPTV-API 更新结果";
+      languageButtons.forEach((button) => {{
+        button.setAttribute("aria-pressed", String(button.dataset.language === language));
+      }});
+      try {{ localStorage.setItem("iptv-pages-language", language); }} catch (error) {{}}
+    }}
+
+    languageButtons.forEach((button) => button.addEventListener("click", () => setLanguage(button.dataset.language)));
+    setLanguage(document.documentElement.lang === "en" ? "en" : "zh-CN");
 
     function fallbackCopy(value) {{
       const textarea = document.createElement("textarea");
@@ -620,23 +730,23 @@ def prepare_pages_site(
       if (!button) return;
 
       const label = button.querySelector(".action-label");
-      const originalLabel = button.dataset.originalLabel || label.textContent;
+      const originalLabel = button.dataset.originalLabel || label.innerHTML;
       button.dataset.originalLabel = originalLabel;
       window.clearTimeout(Number(button.dataset.resetTimer || 0));
 
       try {{
         if (!await copyLink(button.dataset.copyUrl)) throw new Error("copy failed");
-        label.textContent = "已复制 / Copied";
+        label.textContent = document.documentElement.lang === "en" ? "Copied" : "已复制";
         button.classList.add("is-copied");
-        copyStatus.textContent = `已复制 ${{button.dataset.copyUrl}} / Link copied`;
+        copyStatus.textContent = document.documentElement.lang === "en" ? `Copied ${{button.dataset.copyUrl}}` : `已复制 ${{button.dataset.copyUrl}}`;
       }} catch (error) {{
-        label.textContent = "复制失败 / Copy failed";
+        label.textContent = document.documentElement.lang === "en" ? "Copy failed" : "复制失败";
         button.classList.remove("is-copied");
-        copyStatus.textContent = "复制失败，请手动选择链接 / Copy failed";
+        copyStatus.textContent = document.documentElement.lang === "en" ? "Copy failed; select the link manually" : "复制失败，请手动选择链接";
       }}
 
       button.dataset.resetTimer = String(window.setTimeout(() => {{
-        label.textContent = originalLabel;
+        label.innerHTML = originalLabel;
         button.classList.remove("is-copied");
       }}, 1800));
     }});
